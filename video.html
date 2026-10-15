@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta name="viewport"
+
+      content="width=device-width, initial-scale=1">
+
+<title>Live Stream Test</title>
+
+<style>
+
+  body {
+
+    margin: 0;
+
+    background: #111;
+
+    color: white;
+
+    font-family: Arial, sans-serif;
+
+    padding: 15px;
+
+  }
+
+  video {
+
+    width: 100%;
+
+    aspect-ratio: 16 / 9;
+
+    background: black;
+
+  }
+
+</style>
+
+</head>
+
+<body>
+
+ 
+
+<h3>Live TV Test</h3>
+
+<video id="live" controls playsinline
+
+       x-webkit-airplay="allow"></video>
+
+<p id="status">Loading player...</p>
+
+ 
+
+<script src=https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js></script>
+
+ 
+
+<script>
+
+const url =
+
+  https://basement.tail92bf5a.ts.net/mystream/index.m3u8;
+
+ 
+
+const video = document.getElementById("live");
+
+const status = document.getElementById("status");
+
+ 
+
+video.addEventListener("playing", () => {
+
+  status.textContent = "Video playing";
+
+});
+
+ 
+
+video.addEventListener("error", () => {
+
+  status.textContent =
+
+    "Video error: " + video.error?.code;
+
+});
+
+ 
+
+if (Hls.isSupported()) {
+
+  const hls = new Hls();
+
+  hls.loadSource(url);
+
+  hls.attachMedia(video);
+
+ 
+
+  hls.on(Hls.Events.ERROR, (_, data) => {
+
+    status.textContent =
+
+      "HLS error: " + data.details;
+
+  });
+
+} else if (
+
+  video.canPlayType("application/vnd.apple.mpegurl")
+
+) {
+
+  video.src = url;
+
+  status.textContent = "Native HLS player ready";
+
+} else {
+
+  status.textContent = "HLS not supported";
+
+}
+
+</script>
+
+</body>
+
+</html>
