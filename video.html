@@ -4,127 +4,225 @@
 
 <head>
 
-<meta name="viewport"
+  <meta charset="UTF-8">
 
-      content="width=device-width, initial-scale=1">
+  <meta name="viewport"
 
-<title>Live Stream Test</title>
+        content="width=device-width, initial-scale=1">
 
-<style>
+  <title>Live TV Test</title>
 
-  body {
+ 
 
-    margin: 0;
+  <style>
 
-    background: #111;
+    body {
 
-    color: white;
+      background: #111;
 
-    font-family: Arial, sans-serif;
+      color: white;
 
-    padding: 15px;
+      font-family: Arial, sans-serif;
 
-  }
+      padding: 15px;
 
-  video {
+    }
 
-    width: 100%;
+    video {
 
-    aspect-ratio: 16 / 9;
+      width: 100%;
 
-    background: black;
+      aspect-ratio: 16/9;
 
-  }
+      background: black;
 
-</style>
+    }
+
+    #status {
+
+      padding: 12px;
+
+      background: #222;
+
+      border-radius: 6px;
+
+      overflow-wrap: anywhere;
+
+    }
+
+  </style>
 
 </head>
 
+ 
+
 <body>
 
- 
-
-<h3>Live TV Test</h3>
-
-<video id="live" controls playsinline
-
-       x-webkit-airplay="allow"></video>
-
-<p id="status">Loading player...</p>
+  <h2>Live TV Test</h2>
 
  
 
-<script src=https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js></script>
+  <video id="video"
+
+         controls
+
+         playsinline
+
+         preload="auto"
+
+         x-webkit-airplay="allow">
+
+  </video>
 
  
 
-<script>
+  <p id="status">Starting player...</p>
 
-const url =
-
-  https://basement.tail92bf5a.ts.net/mystream/index.m3u8;
+  <button id="play">Play Video</button>
 
  
 
-const video = document.getElementById("live");
-
-const status = document.getElementById("status");
+  <script src=https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js></script>
 
  
 
-video.addEventListener("playing", () => {
+  <script>
 
-  status.textContent = "Video playing";
+    const STREAM_URL =
 
-});
-
- 
-
-video.addEventListener("error", () => {
-
-  status.textContent =
-
-    "Video error: " + video.error?.code;
-
-});
+      https://basement.tail92bf5a.ts.net/mystream//index.m3u8;
 
  
 
-if (Hls.isSupported()) {
+    const video = document.getElementById("video");
 
-  const hls = new Hls();
-
-  hls.loadSource(url);
-
-  hls.attachMedia(video);
+    const status = document.getElementById("status");
 
  
 
-  hls.on(Hls.Events.ERROR, (_, data) => {
+    function message(text) {
 
-    status.textContent =
+      status.textContent = text;
 
-      "HLS error: " + data.details;
+      console.log(text);
 
-  });
+    }
 
-} else if (
+ 
 
-  video.canPlayType("application/vnd.apple.mpegurl")
+    document.getElementById("play")
 
-) {
+      .addEventListener("click", async () => {
 
-  video.src = url;
+        try {
 
-  status.textContent = "Native HLS player ready";
+          await video.play();
 
-} else {
+        } catch (err) {
 
-  status.textContent = "HLS not supported";
+          message("Play failed: " + err.message);
 
-}
+        }
 
-</script>
+      });
+
+ 
+
+    video.addEventListener("playing", () => {
+
+      message("SUCCESS: Video is playing!");
+
+    });
+
+ 
+
+    video.addEventListener("waiting", () => {
+
+      message("Waiting for video data...");
+
+    });
+
+ 
+
+    video.addEventListener("error", () => {
+
+      message("Video error code: " +
+
+        (video.error ? video.error.code : "unknown"));
+
+    });
+
+ 
+
+    if (video.canPlayType(
+
+      "application/vnd.apple.mpegurl"
+
+    )) {
+
+      message("Using native HLS playback");
+
+      video.src = STREAM_URL;
+
+      video.load();
+
+ 
+
+    } else if (
+
+      window.Hls &&
+
+      Hls.isSupported()
+
+    ) {
+
+      message("Using HLS.js");
+
+ 
+
+      const hls = new Hls();
+
+ 
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+
+        message(
+
+          "HLS error: " + data.details +
+
+          " | Fatal: " + data.fatal
+
+        );
+
+      });
+
+ 
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+
+        message("HLS playlist loaded. Press Play.");
+
+      });
+
+ 
+
+      hls.loadSource(STREAM_URL);
+
+      hls.attachMedia(video);
+
+ 
+
+    } else {
+
+      message(
+
+        "HLS not supported or HLS.js failed to load"
+
+      );
+
+    }
+
+  </script>
 
 </body>
 
