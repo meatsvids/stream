@@ -1,54 +1,524 @@
 <!DOCTYPE html>
 
-<html>
+<html lang="en">
 
 <head>
 
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
 
-  <title>JavaScript Test</title>
+<meta name="viewport"
+
+      content="width=device-width,initial-scale=1">
+
+<title>Live TV - Watch and Cast</title>
+
+ 
+
+<style>
+
+  body {
+
+    margin: 0;
+
+    padding: 16px;
+
+    background: #101218;
+
+    color: white;
+
+    font-family: Arial, sans-serif;
+
+  }
+
+  .player {
+
+    max-width: 960px;
+
+    margin: auto;
+
+  }
+
+  video {
+
+    display: block;
+
+    width: 100%;
+
+    aspect-ratio: 16/9;
+
+    background: black;
+
+    border-radius: 9px;
+
+  }
+
+  .toolbar {
+
+    display: flex;
+
+    align-items: center;
+
+    flex-wrap: wrap;
+
+    gap: 12px;
+
+    margin-top: 12px;
+
+  }
+
+  button {
+
+    background: #263653;
+
+    color: white;
+
+    border: 1px solid #506080;
+
+    padding: 12px;
+
+    border-radius: 8px;
+
+    font-size: 15px;
+
+    cursor: pointer;
+
+  }
+
+  google-cast-launcher {
+
+    display: inline-block;
+
+    width: 38px;
+
+    height: 38px;
+
+    --connected-color: #ffffff;
+
+    --disconnected-color: #ffffff;
+
+  }
+
+  #status {
+
+    background: #202735;
+
+    padding: 12px;
+
+    border-radius: 8px;
+
+    font-size: 14px;
+
+    overflow-wrap: anywhere;
+
+  }
+
+  a { color: #a8caff; }
+
+</style>
 
 </head>
 
+ 
+
 <body>
 
- 
+<div class="player">
 
-<h2>GitHub Pages JavaScript Test</h2>
-
- 
-
-<p id="status">JavaScript NOT running</p>
+  <h2>Live TV</h2>
 
  
 
-<button id="testButton">
+  <video id="video"
 
-  Test JavaScript
+    controls
 
-</button>
+    playsinline
+
+    x-webkit-airplay="allow"
+
+    preload="none">
+
+  </video>
+
+ 
+
+  <div class="toolbar">
+
+    <button id="play">Play Live</button>
+
+    <button id="airplay" hidden>AirPlay</button>
+
+ 
+
+    <google-cast-launcher>
+
+    </google-cast-launcher>
+
+ 
+
+    <button id="fullscreen">Fullscreen</button>
+
+  </div>
+
+ 
+
+  <p id="status">Initializing player...</p>
+
+ 
+
+  <p>
+
+    Having trouble casting?
+
+    <a id="directLink" target="_blank"
+
+       rel="noopener">Open original player</a>
+
+  </p>
+
+</div>
 
  
 
 <script>
 
-  document.getElementById("status").textContent =
+(function () {
 
-    "SUCCESS: JavaScript is running!";
+  const STREAM_URL =
+
+    https://basement.tail92bf5a.ts.net/mystream/index.m3u8;
 
  
 
-  document.getElementById("testButton")
+  const video = document.getElementById("video");
 
-    .addEventListener("click", function() {
+  const status = document.getElementById("status");
 
-      alert("JavaScript button works!");
+  const airplay = document.getElementById("airplay");
+
+ 
+
+  const originalPlayer =
+
+    STREAM_URL.replace(/\/index\.m3u8.*$/, "/");
+
+ 
+
+  document.getElementById("directLink").href =
+
+    originalPlayer;
+
+ 
+
+  function report(text) {
+
+    status.textContent = text;
+
+    console.log("[Live TV]", text);
+
+  }
+
+ 
+
+  window.reportCastError = report;
+
+ 
+
+  video.addEventListener("playing", function () {
+
+    report("LIVE - Video playing");
+
+  });
+
+ 
+
+  video.addEventListener("waiting", function () {
+
+    report("Buffering live video...");
+
+  });
+
+ 
+
+  video.addEventListener("error", function () {
+
+    report("Video error: " +
+
+      (video.error ? video.error.message : "Unknown"));
+
+  });
+
+ 
+
+  document.getElementById("play")
+
+    .addEventListener("click", function () {
+
+      video.play().catch(function(err) {
+
+        report("Playback error: " + err.message);
+
+      });
 
     });
+
+ 
+
+  document.getElementById("fullscreen")
+
+    .addEventListener("click", function () {
+
+      if (video.webkitEnterFullscreen) {
+
+        video.webkitEnterFullscreen();
+
+      } else if (video.requestFullscreen) {
+
+        video.requestFullscreen().catch(function(err) {
+
+          report("Fullscreen unavailable: " + err.message);
+
+        });
+
+      }
+
+    });
+
+ 
+
+  // Native Safari AirPlay.
+
+  if (typeof video.webkitShowPlaybackTargetPicker
+
+      === "function") {
+
+    airplay.hidden = false;
+
+    airplay.addEventListener("click", function () {
+
+      video.webkitShowPlaybackTargetPicker();
+
+    });
+
+  }
+
+ 
+
+  function loadHlsJs() {
+
+    report("Loading HLS.js...");
+
+ 
+
+    const script = document.createElement("script");
+
+    script.src =
+
+      https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js;
+
+ 
+
+    script.onload = function () {
+
+      if (!window.Hls || !Hls.isSupported()) {
+
+        report("HLS.js unavailable or unsupported");
+
+        return;
+
+      }
+
+ 
+
+      const hls = new Hls();
+
+ 
+
+      hls.on(Hls.Events.ERROR, function(_, data) {
+
+        report("HLS error: " + data.details);
+
+      });
+
+ 
+
+      hls.on(Hls.Events.MANIFEST_PARSED, function () {
+
+        report("Live playlist ready. Tap Play.");
+
+      });
+
+ 
+
+      hls.attachMedia(video);
+
+      hls.loadSource(STREAM_URL);
+
+    };
+
+ 
+
+    script.onerror = function () {
+
+      report("Could not load HLS.js library");
+
+    };
+
+ 
+
+    document.head.appendChild(script);
+
+  }
+
+ 
+
+  // Prefer native HLS when available, especially on iOS.
+
+  if (video.canPlayType(
+
+      "application/vnd.apple.mpegurl")) {
+
+    video.src = STREAM_URL;
+
+    video.load();
+
+    report("Native HLS ready. Tap Play.");
+
+  } else {
+
+    loadHlsJs();
+
+  }
+
+ 
+
+  // Expose the URL to Google's Cast SDK.
+
+  window.liveCastURL = STREAM_URL;
+
+})();
 
 </script>
 
  
+
+<script>
+
+// This callback must exist before the Cast SDK loads.
+
+window.__onGCastApiAvailable = function(available) {
+
+  if (!available) {
+
+    console.log("Google Cast SDK unavailable");
+
+    return;
+
+  }
+
+ 
+
+  const context = cast.framework.CastContext.getInstance();
+
+ 
+
+  context.setOptions({
+
+    receiverApplicationId:
+
+      chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+
+    autoJoinPolicy:
+
+      chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+
+  });
+
+ 
+
+  async function startCasting() {
+
+    const session = context.getCurrentSession();
+
+    if (!session) return;
+
+ 
+
+    const media = new chrome.cast.media.MediaInfo(
+
+      window.liveCastURL,
+
+      "application/x-mpegURL"
+
+    );
+
+ 
+
+    media.streamType =
+
+      chrome.cast.media.StreamType.LIVE;
+
+ 
+
+    const request =
+
+      new chrome.cast.media.LoadRequest(media);
+
+ 
+
+    try {
+
+      await session.loadMedia(request);
+
+      window.reportCastError(
+
+        "Live stream sent to Chromecast"
+
+      );
+
+    } catch (error) {
+
+      window.reportCastError(
+
+        "Cast playback failed: " + String(error)
+
+      );
+
+    }
+
+  }
+
+ 
+
+  context.addEventListener(
+
+    cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+
+    function(event) {
+
+      if (event.sessionState ===
+
+          cast.framework.SessionState.SESSION_STARTED) {
+
+        startCasting();
+
+      }
+
+    }
+
+  );
+
+};
+
+</script>
+
+ 
+
+<script async src=
+
+https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1>
+
+</script>
 
 </body>
 
