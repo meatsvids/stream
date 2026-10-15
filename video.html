@@ -326,15 +326,99 @@
 
  
 
-      const hls = new Hls();
+      const hls = new Hls({
+
+  // Favor stability over minimum latency.
+
+  lowLatencyMode: false,
 
  
 
-      hls.on(Hls.Events.ERROR, function(_, data) {
+  // Stay a little further behind the live edge.
 
-        report("HLS error: " + data.details);
+  liveSyncDurationCount: 4,
 
-      });
+ 
+
+  // Allow additional buffering.
+
+  maxBufferLength: 30
+
+});
+
+ 
+
+     let mediaRecoveryAttempted = false;
+
+let networkRecoveryAttempted = false;
+
+ 
+
+hls.on(Hls.Events.ERROR, function(event, data) {
+
+  console.warn("HLS error:", data);
+
+ 
+
+  const details = data.details || "Unknown";
+
+  const fatal = data.fatal === true;
+
+ 
+
+  if (!fatal) {
+
+    // Nonfatal errors may be handled by HLS.js.
+
+    console.log("Nonfatal HLS issue:", details);
+
+    return;
+
+  }
+
+ 
+
+  report("HLS playback issue: " + details);
+
+ 
+
+  if (data.type === Hls.ErrorTypes.NETWORK_ERROR &&
+
+      !networkRecoveryAttempted) {
+
+    networkRecoveryAttempted = true;
+
+    report("Retrying live stream...");
+
+    hls.startLoad();
+
+ 
+
+  } else if (
+
+      data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+
+      !mediaRecoveryAttempted) {
+
+    mediaRecoveryAttempted = true;
+
+    report("Recovering video decoder...");
+
+    hls.recoverMediaError();
+
+ 
+
+  } else {
+
+    report("Playback stopped: " + details +
+
+           ". Reload page to reconnect.");
+
+  }
+
+});
+
+
 
  
 
