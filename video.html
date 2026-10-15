@@ -464,31 +464,15 @@ window.__onGCastApiAvailable = function(available) {
 
     try {
 
-  await session.loadMedia(request);
+      await session.loadMedia(request);
 
- 
+      document.getElementById("video").pause();
 
-  // Stop playback on the computer.
+      window.reportCastError(
 
-  const localVideo = document.getElementById("video");
+        "Live stream sent to Chromecast"
 
- 
-
-  if (localVideo) {
-
-    localVideo.pause();
-
-  }
-
- 
-
-  window.reportCastError(
-
-    "Casting to TV. Local playback paused."
-
-  );
-
-}
+      );
 
     } catch (error) {
 
