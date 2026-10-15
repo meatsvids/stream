@@ -8,45 +8,51 @@
 
   <meta name="viewport"
 
-        content="width=device-width, initial-scale=1">
+        content="width=device-width,initial-scale=1">
 
-  <title>Live TV Test</title>
-
- 
+  <title>Live TV Diagnostic</title>
 
   <style>
 
     body {
 
-      background: #111;
+      background:#111;
 
-      color: white;
+      color:white;
 
-      font-family: Arial, sans-serif;
+      font-family:Arial,sans-serif;
 
-      padding: 15px;
+      padding:16px;
 
     }
 
     video {
 
-      width: 100%;
+      width:100%;
 
-      aspect-ratio: 16/9;
+      aspect-ratio:16/9;
 
-      background: black;
+      background:black;
 
     }
 
     #status {
 
-      padding: 12px;
+      background:#222;
 
-      background: #222;
+      padding:12px;
 
-      border-radius: 6px;
+      border-radius:6px;
 
-      overflow-wrap: anywhere;
+      overflow-wrap:anywhere;
+
+    }
+
+    button {
+
+      padding:12px;
+
+      margin:8px 0;
 
     }
 
@@ -54,129 +60,137 @@
 
 </head>
 
- 
-
 <body>
 
-  <h2>Live TV Test</h2>
+ 
+
+<h2>Live TV Diagnostic</h2>
 
  
 
-  <video id="video"
+<video id="video" controls playsinline
 
-         controls
-
-         playsinline
-
-         preload="auto"
-
-         x-webkit-airplay="allow">
-
-  </video>
+       x-webkit-airplay="allow"></video>
 
  
 
-  <p id="status">Starting player...</p>
+<p id="status">HTML loaded; JavaScript not started</p>
 
-  <button id="play">Play Video</button>
-
- 
-
-  <script src=https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js></script>
+<button id="play" type="button">Play Live TV</button>
 
  
 
-  <script>
+<script>
 
-    const STREAM_URL =
+(function () {
 
-      https://basement.tail92bf5a.ts.net/mystream/index.m3u8;
+  const STREAM_URL =
 
- 
-
-    const video = document.getElementById("video");
-
-    const status = document.getElementById("status");
+    https://basement.tail92bf5a.ts.net/mystream/index.m3u8;
 
  
 
-    function message(text) {
+  const video = document.getElementById("video");
 
-      status.textContent = text;
-
-      console.log(text);
-
-    }
+  const status = document.getElementById("status");
 
  
 
-    document.getElementById("play")
+  function log(msg) {
 
-      .addEventListener("click", async () => {
+    status.textContent = msg;
 
-        try {
+    console.log("[Live TV]", msg);
 
-          await video.play();
-
-        } catch (err) {
-
-          message("Play failed: " + err.message);
-
-        }
-
-      });
+  }
 
  
 
-    video.addEventListener("playing", () => {
+  log("JavaScript running");
 
-      message("SUCCESS: Video is playing!");
+ 
+
+  video.addEventListener("playing", () =>
+
+    log("SUCCESS: Video is playing")
+
+  );
+
+ 
+
+  video.addEventListener("waiting", () =>
+
+    log("Buffering video...")
+
+  );
+
+ 
+
+  video.addEventListener("error", () =>
+
+    log("Video error: " +
+
+        (video.error?.message || video.error?.code))
+
+  );
+
+ 
+
+  document.getElementById("play")
+
+    .addEventListener("click", async () => {
+
+      try {
+
+        await video.play();
+
+      } catch (e) {
+
+        log("Play error: " + e.message);
+
+      }
 
     });
 
  
 
-    video.addEventListener("waiting", () => {
+  if (video.canPlayType(
 
-      message("Waiting for video data...");
-
-    });
+      "application/vnd.apple.mpegurl")) {
 
  
 
-    video.addEventListener("error", () => {
+    log("Native HLS ready. Tap Play.");
 
-      message("Video error code: " +
+    video.src = STREAM_URL;
 
-        (video.error ? video.error.code : "unknown"));
-
-    });
+    video.load();
 
  
 
-    if (video.canPlayType(
+  } else {
 
-      "application/vnd.apple.mpegurl"
-
-    )) {
-
-      message("Using native HLS playback");
-
-      video.src = STREAM_URL;
-
-      video.load();
+    log("Loading HLS.js library...");
 
  
 
-    } else if (
+    const script = document.createElement("script");
 
-      window.Hls &&
+    script.src =
 
-      Hls.isSupported()
+      https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js;
 
-    ) {
+ 
 
-      message("Using HLS.js");
+    script.onload = () => {
+
+      if (!window.Hls || !Hls.isSupported()) {
+
+        log("HLS.js loaded, but playback unsupported");
+
+        return;
+
+      }
 
  
 
@@ -186,43 +200,45 @@
 
       hls.on(Hls.Events.ERROR, (_, data) => {
 
-        message(
-
-          "HLS error: " + data.details +
-
-          " | Fatal: " + data.fatal
-
-        );
+        log("HLS error: " + data.details);
 
       });
 
  
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_PARSED, () =>
 
-        message("HLS playlist loaded. Press Play.");
-
-      });
-
- 
-
-      hls.loadSource(STREAM_URL);
-
-      hls.attachMedia(video);
-
- 
-
-    } else {
-
-      message(
-
-        "HLS not supported or HLS.js failed to load"
+        log("Playlist loaded. Tap Play.")
 
       );
 
-    }
+ 
 
-  </script>
+      hls.attachMedia(video);
+
+      hls.loadSource(STREAM_URL);
+
+ 
+
+      log("HLS.js initialized");
+
+    };
+
+ 
+
+    script.onerror = () =>
+
+      log("ERROR: HLS.js library could not load");
+
+ 
+
+    document.head.appendChild(script);
+
+  }
+
+})();
+
+</script>
 
 </body>
 
