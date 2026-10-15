@@ -1,62 +1,12 @@
 <!DOCTYPE html>
 
-<html lang="en">
+<html>
 
 <head>
 
   <meta charset="UTF-8">
 
-  <meta name="viewport"
-
-        content="width=device-width,initial-scale=1">
-
-  <title>Live TV Diagnostic</title>
-
-  <style>
-
-    body {
-
-      background:#111;
-
-      color:white;
-
-      font-family:Arial,sans-serif;
-
-      padding:16px;
-
-    }
-
-    video {
-
-      width:100%;
-
-      aspect-ratio:16/9;
-
-      background:black;
-
-    }
-
-    #status {
-
-      background:#222;
-
-      padding:12px;
-
-      border-radius:6px;
-
-      overflow-wrap:anywhere;
-
-    }
-
-    button {
-
-      padding:12px;
-
-      margin:8px 0;
-
-    }
-
-  </style>
+  <title>JavaScript Test</title>
 
 </head>
 
@@ -64,181 +14,41 @@
 
  
 
-<h2>Live TV Diagnostic</h2>
+<h2>GitHub Pages JavaScript Test</h2>
 
  
 
-<video id="video" controls playsinline
-
-       x-webkit-airplay="allow"></video>
+<p id="status">JavaScript NOT running</p>
 
  
 
-<p id="status">HTML loaded; JavaScript not started</p>
+<button id="testButton">
 
-<button id="play" type="button">Play Live TV</button>
+  Test JavaScript
+
+</button>
 
  
 
 <script>
 
-(function () {
+  document.getElementById("status").textContent =
 
-  const STREAM_URL =
-
-    https://basement.tail92bf5a.ts.net/mystream/index.m3u8;
+    "SUCCESS: JavaScript is running!";
 
  
 
-  const video = document.getElementById("video");
+  document.getElementById("testButton")
 
-  const status = document.getElementById("status");
+    .addEventListener("click", function() {
 
- 
-
-  function log(msg) {
-
-    status.textContent = msg;
-
-    console.log("[Live TV]", msg);
-
-  }
-
- 
-
-  log("JavaScript running");
-
- 
-
-  video.addEventListener("playing", () =>
-
-    log("SUCCESS: Video is playing")
-
-  );
-
- 
-
-  video.addEventListener("waiting", () =>
-
-    log("Buffering video...")
-
-  );
-
- 
-
-  video.addEventListener("error", () =>
-
-    log("Video error: " +
-
-        (video.error?.message || video.error?.code))
-
-  );
-
- 
-
-  document.getElementById("play")
-
-    .addEventListener("click", async () => {
-
-      try {
-
-        await video.play();
-
-      } catch (e) {
-
-        log("Play error: " + e.message);
-
-      }
+      alert("JavaScript button works!");
 
     });
 
- 
-
-  if (video.canPlayType(
-
-      "application/vnd.apple.mpegurl")) {
-
- 
-
-    log("Native HLS ready. Tap Play.");
-
-    video.src = STREAM_URL;
-
-    video.load();
-
- 
-
-  } else {
-
-    log("Loading HLS.js library...");
-
- 
-
-    const script = document.createElement("script");
-
-    script.src =
-
-      https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js;
-
- 
-
-    script.onload = () => {
-
-      if (!window.Hls || !Hls.isSupported()) {
-
-        log("HLS.js loaded, but playback unsupported");
-
-        return;
-
-      }
-
- 
-
-      const hls = new Hls();
-
- 
-
-      hls.on(Hls.Events.ERROR, (_, data) => {
-
-        log("HLS error: " + data.details);
-
-      });
-
- 
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () =>
-
-        log("Playlist loaded. Tap Play.")
-
-      );
-
- 
-
-      hls.attachMedia(video);
-
-      hls.loadSource(STREAM_URL);
-
- 
-
-      log("HLS.js initialized");
-
-    };
-
- 
-
-    script.onerror = () =>
-
-      log("ERROR: HLS.js library could not load");
-
- 
-
-    document.head.appendChild(script);
-
-  }
-
-})();
-
 </script>
+
+ 
 
 </body>
 
