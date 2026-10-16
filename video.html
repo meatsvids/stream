@@ -181,302 +181,162 @@
  
 
 <script>
-
 (function () {
+  "use strict";
 
-  const STREAM_URL = "https://basement.tail92bf5a.ts.net/mystream/index.m3u8"
-
- 
-
+  const STREAM_URL = "https://basement.tail92bf5a.ts.net/mystream/index.m3u8";
   const video = document.getElementById("video");
-
   const status = document.getElementById("status");
-
   const airplay = document.getElementById("airplay");
+  const MAX_STARTUP_RETRIES = 5;
+  const RETRY_DELAY_MS = 2000;
 
- 
-
-  const originalPlayer =
-
-    STREAM_URL.replace(/\/index\.m3u8.*$/, "/");
-
- 
+  let hls = null;
+  let retryTimer = null;
+  let retries = 0;
+  let hasPlayed = false;
+  let playRequested = false;
 
   document.getElementById("directLink").href =
+    STREAM_URL.replace(/\/index\.m3u8(?:[?#].*)?$/, "/");
 
-    originalPlayer;
-
- 
-
-  function report(text) {
-
-    status.textContent = text;
-
-    console.log("[Live TV]", text);
-
+  function report(message) {
+    status.textContent = message;
+    console.log("[Live TV]", message);
   }
-
- 
-
   window.reportCastError = report;
 
- 
+  function tryPlay() {
+    const result = video.play();
+    if (result && typeof result.catch === "function") {
+      result.catch(function (error) {
+        report("Playback error: " + error.message);
+      });
+    }
+  }
+
+  document.getElementById("play").addEventListener("click", function () {
+    playRequested = true;
+    if (hls && retries >= MAX_STARTUP_RETRIES && !hasPlayed) {
+      retries = 0;
+      startHls();
+    } else {
+      tryPlay();
+    }
+  });
+
+  document.getElementById("fullscreen").addEventListener("click", function () {
+    if (typeof video.webkitEnterFullscreen === "function") {
+      video.webkitEnterFullscreen();
+    } else if (video.requestFullscreen) {
+      video.requestFullscreen().catch(function (error) {
+        report("Fullscreen unavailable: " + error.message);
+      });
+    }
+  });
+
+  if (typeof video.webkitShowPlaybackTargetPicker === "function") {
+    airplay.hidden = false;
+    airplay.addEventListener("click", function () {
+      video.webkitShowPlaybackTargetPicker();
+    });
+  }
 
   video.addEventListener("playing", function () {
-
+    hasPlayed = true;
     report("LIVE - Video playing");
-
   });
-
- 
-
   video.addEventListener("waiting", function () {
-
-    report("Buffering live video...");
-
+    if (!retryTimer) report("Buffering live video...");
   });
-
- 
-
   video.addEventListener("error", function () {
-
-    report("Video error: " +
-
-      (video.error ? video.error.message : "Unknown"));
-
+    const reason = video.error ? video.error.message : "Unknown video error";
+    if (hls && !hasPlayed) {
+      scheduleRetry("Browser decoder: " + reason);
+    } else {
+      report("Video error: " + reason);
+    }
   });
 
- 
-
-  document.getElementById("play")
-
-    .addEventListener("click", function () {
-
-      video.play().catch(function(err) {
-
-        report("Playback error: " + err.message);
-
-      });
-
-    });
-
- 
-
-  document.getElementById("fullscreen")
-
-    .addEventListener("click", function () {
-
-      if (video.webkitEnterFullscreen) {
-
-        video.webkitEnterFullscreen();
-
-      } else if (video.requestFullscreen) {
-
-        video.requestFullscreen().catch(function(err) {
-
-          report("Fullscreen unavailable: " + err.message);
-
-        });
-
-      }
-
-    });
-
- 
-
-  // Native Safari AirPlay.
-
-  if (typeof video.webkitShowPlaybackTargetPicker
-
-      === "function") {
-
-    airplay.hidden = false;
-
-    airplay.addEventListener("click", function () {
-
-      video.webkitShowPlaybackTargetPicker();
-
-    });
-
+  function scheduleRetry(reason) {
+    // Retries are for startup only: a playing stream is not interrupted.
+    if (hasPlayed || retryTimer) return;
+    if (retries >= MAX_STARTUP_RETRIES) {
+      report("Could not start live video after " + MAX_STARTUP_RETRIES +
+        " retries. Press Play Live to try again. Last error: " + reason);
+      return;
+    }
+    retries++;
+    report("Startup issue (" + reason + "). Retrying " +
+      retries + "/" + MAX_STARTUP_RETRIES + " in 2 seconds...");
+    retryTimer = setTimeout(function () {
+      retryTimer = null;
+      startHls();
+    }, RETRY_DELAY_MS);
   }
 
- 
-
-  function loadHlsJs() {
-
-    report("Loading HLS.js...");
-
- 
-
-    const script = document.createElement("script");
-
-    script.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
-
- 
-
-    script.onload = function () {
-
-      if (!window.Hls || !Hls.isSupported()) {
-
-        report("HLS.js unavailable or unsupported");
-
-        return;
-
-      }
-
- 
-
-      const hls = new Hls({
-
-  // Favor stability over minimum latency.
-
-  lowLatencyMode: false,
-
- 
-
-  // Stay a little further behind the live edge.
-
-  liveSyncDurationCount: 4,
-
- 
-
-  // Allow additional buffering.
-
-  maxBufferLength: 30
-
-});
-
- 
-
-     let mediaRecoveryAttempted = false;
-
-let networkRecoveryAttempted = false;
-
- 
-
-hls.on(Hls.Events.ERROR, function(event, data) {
-
-  console.warn("HLS error:", data);
-
- 
-
-  const details = data.details || "Unknown";
-
-  const fatal = data.fatal === true;
-
- 
-
-  if (!fatal) {
-
-    // Nonfatal errors may be handled by HLS.js.
-
-    console.log("Nonfatal HLS issue:", details);
-
-    return;
-
-  }
-
- 
-
-  report("HLS playback issue: " + details);
-
- 
-
-  if (data.type === Hls.ErrorTypes.NETWORK_ERROR &&
-
-      !networkRecoveryAttempted) {
-
-    networkRecoveryAttempted = true;
-
-    report("Retrying live stream...");
-
-    hls.startLoad();
-
- 
-
-  } else if (
-
-      data.type === Hls.ErrorTypes.MEDIA_ERROR &&
-
-      !mediaRecoveryAttempted) {
-
-    mediaRecoveryAttempted = true;
-
-    report("Recovering video decoder...");
-
-    hls.recoverMediaError();
-
- 
-
-  } else {
-
-    report("Playback stopped: " + details +
-
-           ". Reload page to reconnect.");
-
-  }
-
-});
-
-
-
- 
-
-      hls.on(Hls.Events.MANIFEST_PARSED, function () {
-
-        report("Live playlist ready. Tap Play.");
-
-      });
-
- 
-
-      hls.on(Hls.Events.MEDIA_ATTACHED, function () {
-            hls.loadSource(STREAM_URL);
-      });
-
-      hls.attachMedia(video);
-      };
-
- 
-
-    script.onerror = function () {
-
-      report("Could not load HLS.js library");
-
-    };
-
- 
-
-    document.head.appendChild(script);
-
-  }
-
- 
-
-  // Prefer native HLS when available, especially on iOS.
-
-  if (video.canPlayType(
-
-      "application/vnd.apple.mpegurl")) {
-
-    video.src = STREAM_URL;
-
+  function startHls() {
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+    // Clear any failed MediaSource before attaching a fresh HLS.js instance.
+    video.removeAttribute("src");
     video.load();
 
-    report("Native HLS ready. Tap Play.");
+    hls = new Hls(); // Use the same default HLS.js behavior as a basic player.
+    const thisHls = hls;
 
-  } else {
-
-    loadHlsJs();
-
+    hls.on(Hls.Events.MEDIA_ATTACHED, function () {
+      if (thisHls === hls) thisHls.loadSource(STREAM_URL);
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, function () {
+      if (thisHls !== hls) return;
+      report("Live playlist ready. Tap Play.");
+      if (playRequested) tryPlay();
+    });
+    hls.on(Hls.Events.ERROR, function (event, data) {
+      if (thisHls !== hls) return;
+      console.warn("[Live TV] HLS error", data);
+      if (data.fatal) {
+        if (!hasPlayed) {
+          scheduleRetry(data.details || "HLS startup failed");
+        } else {
+          report("HLS playback error: " + (data.details || "Unknown"));
+        }
+      }
+    });
+    hls.attachMedia(video);
   }
 
- 
+  function loadHlsJs() {
+    report("Loading HLS.js...");
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
+    script.onload = function () {
+      if (!window.Hls || !Hls.isSupported()) {
+        report("HLS.js is not supported in this browser");
+        return;
+      }
+      startHls();
+    };
+    script.onerror = function () {
+      report("Unable to download HLS.js library");
+    };
+    document.head.appendChild(script);
+  }
 
-  // Expose the URL to Google's Cast SDK.
+  // Keep native HLS for Safari/iOS; use HLS.js for Chrome/Edge.
+  if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = STREAM_URL;
+    video.load();
+    report("Native HLS ready. Tap Play.");
+  } else {
+    loadHlsJs();
+  }
 
+  // Read by the existing, separate Google Cast initialization script.
   window.liveCastURL = STREAM_URL;
-
 })();
 </script>
 
