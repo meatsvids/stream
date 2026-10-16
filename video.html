@@ -187,15 +187,20 @@
   const STREAM_URL = "https://basement.tail92bf5a.ts.net/mystream/index.m3u8";
   const video = document.getElementById("video");
   const status = document.getElementById("status");
+  const playButton = document.getElementById("play");
   const airplay = document.getElementById("airplay");
+  const RETRY_DELAY_MS = 3000;
+  const STARTUP_TIMEOUT_MS = 20000;
   const MAX_STARTUP_RETRIES = 5;
-  const RETRY_DELAY_MS = 2000;
 
   let hls = null;
   let retryTimer = null;
+  let startupTimer = null;
+  let attempt = 0;
   let retries = 0;
-  let hasPlayed = false;
-  let playRequested = false;
+  let ready = false;
+  let nativeHls = false;
+  let everPlayed = false;
 
   document.getElementById("directLink").href =
     STREAM_URL.replace(/\/index\.m3u8(?:[?#].*)?$/, "/");
@@ -206,23 +211,42 @@
   }
   window.reportCastError = report;
 
-  function tryPlay() {
+  // Chrome HLS.js: don't allow video.play() or native media controls
+  // before the browser has enough video data to start playing.
+  function setReady(isReady) {
+    ready = isReady;
+    if (nativeHls) return;
+    playButton.disabled = !isReady;
+    playButton.textContent = isReady ? "Play Live" : "Preparing Live TV...";
+    video.controls = isReady;
+    video.style.pointerEvents = isReady ? "auto" : "none";
+  }
+
+  function clearStartupTimer() {
+    if (startupTimer !== null) {
+      clearTimeout(startupTimer);
+      startupTimer = null;
+    }
+  }
+
+  function safelyPlay() {
+    if (!ready && !nativeHls) {
+      report("Preparing live video. Please wait...");
+      return;
+    }
     const result = video.play();
     if (result && typeof result.catch === "function") {
       result.catch(function (error) {
+        // Some aborted play promises happen during a stream reset.
+        if (!ready && !nativeHls) return;
         report("Playback error: " + error.message);
       });
     }
   }
 
-  document.getElementById("play").addEventListener("click", function () {
-    playRequested = true;
-    if (hls && retries >= MAX_STARTUP_RETRIES && !hasPlayed) {
-      retries = 0;
-      startHls();
-    } else {
-      tryPlay();
-    }
+  playButton.addEventListener("click", function () {
+    if (!ready && !nativeHls) return;
+    safelyPlay();
   });
 
   document.getElementById("fullscreen").addEventListener("click", function () {
@@ -243,99 +267,141 @@
   }
 
   video.addEventListener("playing", function () {
-    hasPlayed = true;
+    everPlayed = true;
+    retries = 0;
+    clearStartupTimer();
     report("LIVE - Video playing");
   });
+
   video.addEventListener("waiting", function () {
-    if (!retryTimer) report("Buffering live video...");
+    if (ready || nativeHls) report("Buffering live video...");
   });
+
   video.addEventListener("error", function () {
-    const reason = video.error ? video.error.message : "Unknown video error";
-    if (hls && !hasPlayed) {
+    const reason = video.error ? video.error.message : "Unknown media error";
+    if (!nativeHls && !ready && retryTimer === null) {
       scheduleRetry("Browser decoder: " + reason);
-    } else {
+    } else if (ready || nativeHls) {
       report("Video error: " + reason);
     }
   });
 
+  function resetMedia() {
+    clearStartupTimer();
+    // Invalidate callbacks from an older HLS instance.
+    attempt++;
+    if (hls) {
+      const old = hls;
+      hls = null;
+      old.destroy();
+    }
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+  }
+
   function scheduleRetry(reason) {
-    // Retries are for startup only: a playing stream is not interrupted.
-    if (hasPlayed || retryTimer) return;
+    if (ready || retryTimer !== null) return;
+    resetMedia();
+    setReady(false);
     if (retries >= MAX_STARTUP_RETRIES) {
-      report("Could not start live video after " + MAX_STARTUP_RETRIES +
-        " retries. Press Play Live to try again. Last error: " + reason);
+      report("Unable to prepare video after " + MAX_STARTUP_RETRIES +
+        " retries. Use Retry Connection below, or open the original player. Last error: " + reason);
+      playButton.disabled = false;
+      playButton.textContent = "Retry Connection";
+      playButton.onclick = function () {
+        playButton.onclick = null;
+        retries = 0;
+        beginHlsAttempt();
+      };
       return;
     }
     retries++;
-    report("Startup issue (" + reason + "). Retrying " +
-      retries + "/" + MAX_STARTUP_RETRIES + " in 2 seconds...");
+    report("Stream not ready (" + reason + "). Retrying " +
+      retries + "/" + MAX_STARTUP_RETRIES + " in 3 seconds...");
     retryTimer = setTimeout(function () {
       retryTimer = null;
-      startHls();
+      beginHlsAttempt();
     }, RETRY_DELAY_MS);
   }
 
-  function startHls() {
-    if (hls) {
-      hls.destroy();
-      hls = null;
+  function beginHlsAttempt() {
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
     }
-    // Clear any failed MediaSource before attaching a fresh HLS.js instance.
-    video.removeAttribute("src");
-    video.load();
+    resetMedia();
+    setReady(false);
+    report("Preparing live stream" + (retries ? " (attempt " + (retries + 1) + ")" : "") + "...");
+    const currentAttempt = attempt;
+    const instance = new Hls();
+    hls = instance;
 
-    hls = new Hls(); // Use the same default HLS.js behavior as a basic player.
-    const thisHls = hls;
+    startupTimer = setTimeout(function () {
+      if (currentAttempt === attempt && !ready) {
+        scheduleRetry("startup timed out");
+      }
+    }, STARTUP_TIMEOUT_MS);
 
-    hls.on(Hls.Events.MEDIA_ATTACHED, function () {
-      if (thisHls === hls) thisHls.loadSource(STREAM_URL);
+    instance.on(Hls.Events.MEDIA_ATTACHED, function () {
+      if (currentAttempt === attempt) instance.loadSource(STREAM_URL);
     });
-    hls.on(Hls.Events.MANIFEST_PARSED, function () {
-      if (thisHls !== hls) return;
-      report("Live playlist ready. Tap Play.");
-      if (playRequested) tryPlay();
-    });
-    hls.on(Hls.Events.ERROR, function (event, data) {
-      if (thisHls !== hls) return;
-      console.warn("[Live TV] HLS error", data);
-      if (data.fatal) {
-        if (!hasPlayed) {
-          scheduleRetry(data.details || "HLS startup failed");
-        } else {
-          report("HLS playback error: " + (data.details || "Unknown"));
-        }
+
+    instance.on(Hls.Events.MANIFEST_PARSED, function () {
+      if (currentAttempt === attempt && !ready) {
+        report("Playlist loaded. Buffering video; please wait...");
       }
     });
-    hls.attachMedia(video);
+
+    // MANIFEST_PARSED isn't enough: the first media bytes must be decoded.
+    instance.on(Hls.Events.ERROR, function (_event, data) {
+      if (currentAttempt !== attempt) return;
+      console.warn("[Live TV] HLS error", data);
+      if (data.fatal && !ready) {
+        scheduleRetry(data.details || "HLS startup failure");
+      } else if (data.fatal && ready) {
+        report("HLS playback error: " + (data.details || "Unknown"));
+      }
+    });
+    instance.attachMedia(video);
   }
 
+  video.addEventListener("canplay", function () {
+    if (nativeHls || ready || retryTimer !== null) return;
+    clearStartupTimer();
+    retries = 0;
+    setReady(true);
+    report("Live video ready. Press Play Live.");
+  });
+
   function loadHlsJs() {
+    setReady(false);
     report("Loading HLS.js...");
     const script = document.createElement("script");
     script.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
     script.onload = function () {
       if (!window.Hls || !Hls.isSupported()) {
-        report("HLS.js is not supported in this browser");
+        report("HLS.js unavailable or unsupported");
         return;
       }
-      startHls();
+      beginHlsAttempt();
     };
     script.onerror = function () {
-      report("Unable to download HLS.js library");
+      report("Could not load HLS.js library");
     };
     document.head.appendChild(script);
   }
 
-  // Keep native HLS for Safari/iOS; use HLS.js for Chrome/Edge.
-  if (video.canPlayType("application/vnd.apple.mpegurl")) {
+  // Retain Safari's native HLS handling, including user-gesture playback.
+  nativeHls = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
+  if (nativeHls) {
     video.src = STREAM_URL;
     video.load();
-    report("Native HLS ready. Tap Play.");
+    report("Native HLS ready. Press Play Live.");
   } else {
     loadHlsJs();
   }
 
-  // Read by the existing, separate Google Cast initialization script.
   window.liveCastURL = STREAM_URL;
 })();
 </script>
