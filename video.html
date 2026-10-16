@@ -144,7 +144,7 @@
 
   <div class="toolbar">
 
-    <button id="play">Play Live</button>
+    <button id="play" disabled>Connecting Live TV...</button>
 
     <button id="airplay" hidden>AirPlay</button>
 
@@ -184,24 +184,24 @@
 (function () {
   "use strict";
 
+  // Use the same HLS library distributed by this MediaMTX server.
   const STREAM_URL = "https://basement.tail92bf5a.ts.net/mystream/index.m3u8";
+  const BUNDLED_HLS_JS = "https://basement.tail92bf5a.ts.net/mystream/hls.min.js";
+  const FALLBACK_HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
   const video = document.getElementById("video");
   const status = document.getElementById("status");
   const playButton = document.getElementById("play");
   const airplay = document.getElementById("airplay");
-  const RETRY_DELAY_MS = 3000;
-  const STARTUP_TIMEOUT_MS = 20000;
-  const MAX_STARTUP_RETRIES = 5;
+  const RETRY_DELAY_MS = 2000;
 
   let hls = null;
   let retryTimer = null;
-  let startupTimer = null;
-  let attempt = 0;
-  let retries = 0;
-  let ready = false;
+  let generation = 0;
+  let manifestReady = false;
   let nativeHls = false;
-  let everPlayed = false;
+  let isCasting = false;
 
+  window.liveCastURL = STREAM_URL;
   document.getElementById("directLink").href =
     STREAM_URL.replace(/\/index\.m3u8(?:[?#].*)?$/, "/");
 
@@ -211,50 +211,44 @@
   }
   window.reportCastError = report;
 
-  // Chrome HLS.js: don't allow video.play() or native media controls
-  // before the browser has enough video data to start playing.
-  function setReady(isReady) {
-    ready = isReady;
-    if (nativeHls) return;
-    playButton.disabled = !isReady;
-    playButton.textContent = isReady ? "Play Live" : "Preparing Live TV...";
-    video.controls = isReady;
-    video.style.pointerEvents = isReady ? "auto" : "none";
-  }
-
-  function clearStartupTimer() {
-    if (startupTimer !== null) {
-      clearTimeout(startupTimer);
-      startupTimer = null;
+  function setPlayEnabled(enabled) {
+    playButton.disabled = !enabled;
+    playButton.textContent = enabled ? "Play / Unmute" : "Connecting Live TV...";
+    // Prevent premature tapping on the native video control during HLS startup.
+    if (!nativeHls) {
+      video.controls = enabled;
+      video.style.pointerEvents = enabled ? "auto" : "none";
     }
   }
 
-  function safelyPlay() {
-    if (!ready && !nativeHls) {
-      report("Preparing live video. Please wait...");
-      return;
-    }
-    const result = video.play();
-    if (result && typeof result.catch === "function") {
-      result.catch(function (error) {
-        // Some aborted play promises happen during a stream reset.
-        if (!ready && !nativeHls) return;
-        report("Playback error: " + error.message);
+  function startPlayback() {
+    if (isCasting || (!nativeHls && !manifestReady)) return;
+    const p = video.play();
+    if (p && typeof p.catch === "function") {
+      p.catch(function (err) {
+        if (err.name !== "AbortError") {
+          report("Ready. Tap Play / Unmute to start: " + err.message);
+        }
       });
     }
   }
 
   playButton.addEventListener("click", function () {
-    if (!ready && !nativeHls) return;
-    safelyPlay();
+    if (isCasting) {
+      report("Video is casting to TV. Disconnect Cast to watch here.");
+      return;
+    }
+    if (!nativeHls && !manifestReady) return;
+    video.muted = false;
+    startPlayback();
   });
 
   document.getElementById("fullscreen").addEventListener("click", function () {
     if (typeof video.webkitEnterFullscreen === "function") {
       video.webkitEnterFullscreen();
     } else if (video.requestFullscreen) {
-      video.requestFullscreen().catch(function (error) {
-        report("Fullscreen unavailable: " + error.message);
+      video.requestFullscreen().catch(function (err) {
+        report("Fullscreen unavailable: " + err.message);
       });
     }
   });
@@ -266,143 +260,145 @@
     });
   }
 
+  // Autoplay muted is intentional: it matches MediaMTX's reliable startup
+  // behavior and avoids Chrome's user-gesture autoplay restrictions.
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+
   video.addEventListener("playing", function () {
-    everPlayed = true;
-    retries = 0;
-    clearStartupTimer();
-    report("LIVE - Video playing");
+    if (!isCasting) report("LIVE - Video playing" + (video.muted ? " (tap Play / Unmute for audio)" : ""));
   });
-
-  video.addEventListener("waiting", function () {
-    if (ready || nativeHls) report("Buffering live video...");
-  });
-
   video.addEventListener("error", function () {
-    const reason = video.error ? video.error.message : "Unknown media error";
-    if (!nativeHls && !ready && retryTimer === null) {
-      scheduleRetry("Browser decoder: " + reason);
-    } else if (ready || nativeHls) {
-      report("Video error: " + reason);
-    }
+    console.warn("HTML video media error", video.error);
+    // HLS.js handles fatal errors below; don't recursively reset it here.
   });
 
-  function resetMedia() {
-    clearStartupTimer();
-    // Invalidate callbacks from an older HLS instance.
-    attempt++;
+  // Google Cast stays separate from player retries.
+  window.addEventListener("live-tv-cast-started", function () {
+    isCasting = true;
+    video.pause();
+  });
+  window.addEventListener("live-tv-cast-ended", function () {
+    isCasting = false;
+    report("Cast disconnected. Tap Play / Unmute to watch here.");
+  });
+
+  function stopHls() {
+    generation++;
     if (hls) {
       const old = hls;
       hls = null;
       old.destroy();
     }
+    // Explicitly release any previously failed MSE media source.
     video.pause();
     video.removeAttribute("src");
     video.load();
+    manifestReady = false;
+    setPlayEnabled(false);
   }
 
   function scheduleRetry(reason) {
-    if (ready || retryTimer !== null) return;
-    resetMedia();
-    setReady(false);
-    if (retries >= MAX_STARTUP_RETRIES) {
-      report("Unable to prepare video after " + MAX_STARTUP_RETRIES +
-        " retries. Use Retry Connection below, or open the original player. Last error: " + reason);
-      playButton.disabled = false;
-      playButton.textContent = "Retry Connection";
-      playButton.onclick = function () {
-        playButton.onclick = null;
-        retries = 0;
-        beginHlsAttempt();
-      };
-      return;
-    }
-    retries++;
-    report("Stream not ready (" + reason + "). Retrying " +
-      retries + "/" + MAX_STARTUP_RETRIES + " in 3 seconds...");
+    if (retryTimer !== null) return;
+    stopHls();
+    report("Stream startup issue (" + reason + "). Retrying in 2 seconds...");
     retryTimer = setTimeout(function () {
       retryTimer = null;
-      beginHlsAttempt();
+      beginHls();
     }, RETRY_DELAY_MS);
   }
 
-  function beginHlsAttempt() {
+  function beginHls() {
     if (retryTimer !== null) {
       clearTimeout(retryTimer);
       retryTimer = null;
     }
-    resetMedia();
-    setReady(false);
-    report("Preparing live stream" + (retries ? " (attempt " + (retries + 1) + ")" : "") + "...");
-    const currentAttempt = attempt;
-    const instance = new Hls();
+    stopHls();
+    const currentGeneration = generation;
+    report("Connecting to live video...");
+
+    // Match MediaMTX built-in player rather than custom startup buffer gates.
+    const instance = new Hls({ maxLiveSyncPlaybackRate: 1.5 });
     hls = instance;
 
-    startupTimer = setTimeout(function () {
-      if (currentAttempt === attempt && !ready) {
-        scheduleRetry("startup timed out");
-      }
-    }, STARTUP_TIMEOUT_MS);
-
-    instance.on(Hls.Events.MEDIA_ATTACHED, function () {
-      if (currentAttempt === attempt) instance.loadSource(STREAM_URL);
-    });
-
-    instance.on(Hls.Events.MANIFEST_PARSED, function () {
-      if (currentAttempt === attempt && !ready) {
-        report("Playlist loaded. Buffering video; please wait...");
-      }
-    });
-
-    // MANIFEST_PARSED isn't enough: the first media bytes must be decoded.
     instance.on(Hls.Events.ERROR, function (_event, data) {
-      if (currentAttempt !== attempt) return;
+      if (currentGeneration !== generation) return;
       console.warn("[Live TV] HLS error", data);
-      if (data.fatal && !ready) {
-        scheduleRetry(data.details || "HLS startup failure");
-      } else if (data.fatal && ready) {
-        report("HLS playback error: " + (data.details || "Unknown"));
-      }
+      if (data.fatal) scheduleRetry(data.details || "fatal HLS error");
     });
+    instance.on(Hls.Events.MEDIA_ATTACHED, function () {
+      if (currentGeneration === generation) instance.loadSource(STREAM_URL);
+    });
+    instance.on(Hls.Events.MANIFEST_LOADED, function () {
+      if (currentGeneration !== generation) return;
+      manifestReady = true;
+      setPlayEnabled(true);
+      report("Live stream loaded. Starting video...");
+      // Same trigger as MediaMTX's built-in page; muted autoplay is permitted.
+      startPlayback();
+    });
+    // Rejoin live after pausing, as MediaMTX does.
+    video.onplay = function () {
+      const live = instance.liveSyncPosition;
+      if (currentGeneration === generation && Number.isFinite(live)) {
+        try { video.currentTime = live; } catch (_) { /* transient live position */ }
+      }
+    };
     instance.attachMedia(video);
   }
 
-  video.addEventListener("canplay", function () {
-    if (nativeHls || ready || retryTimer !== null) return;
-    clearStartupTimer();
-    retries = 0;
-    setReady(true);
-    report("Live video ready. Press Play Live.");
-  });
-
-  function loadHlsJs() {
-    setReady(false);
-    report("Loading HLS.js...");
+  function loadScript(src, onOK, onFail) {
     const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
-    script.onload = function () {
-      if (!window.Hls || !Hls.isSupported()) {
-        report("HLS.js unavailable or unsupported");
-        return;
-      }
-      beginHlsAttempt();
-    };
-    script.onerror = function () {
-      report("Could not load HLS.js library");
-    };
+    script.src = src;
+    script.onload = onOK;
+    script.onerror = onFail;
     document.head.appendChild(script);
   }
 
-  // Retain Safari's native HLS handling, including user-gesture playback.
-  nativeHls = Boolean(video.canPlayType("application/vnd.apple.mpegurl"));
-  if (nativeHls) {
-    video.src = STREAM_URL;
-    video.load();
-    report("Native HLS ready. Press Play Live.");
-  } else {
-    loadHlsJs();
+  function initHls() {
+    // Prefer exactly the HLS.js version used by the working MediaMTX page.
+    report("Loading MediaMTX HLS playback library...");
+    loadScript(BUNDLED_HLS_JS, function () {
+      if (window.Hls && Hls.isSupported()) {
+        report("MediaMTX HLS.js loaded");
+        beginHls();
+      } else {
+        tryFallback();
+      }
+    }, tryFallback);
   }
 
-  window.liveCastURL = STREAM_URL;
+  function tryFallback() {
+    report("Loading backup HLS.js...");
+    loadScript(FALLBACK_HLS_JS, function () {
+      if (window.Hls && Hls.isSupported()) beginHls();
+      else if (video.canPlayType("application/vnd.apple.mpegurl")) initNativeHls();
+      else report("HLS.js unsupported in this browser");
+    }, function () {
+      if (video.canPlayType("application/vnd.apple.mpegurl")) initNativeHls();
+      else report("Could not load either HLS library");
+    });
+  }
+
+  function initNativeHls() {
+    nativeHls = true;
+    setPlayEnabled(true);
+    video.src = STREAM_URL;
+    video.load();
+    report("Native HLS ready. Tap Play / Unmute.");
+  }
+
+  setPlayEnabled(false);
+  // Like MediaMTX, prefer hls.js over native HLS where MSE is available.
+  // On iPhone prefer native HLS for AirPlay and best iOS compatibility.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (isIOS && video.canPlayType("application/vnd.apple.mpegurl")) {
+    initNativeHls();
+  } else {
+    initHls();
+  }
 })();
 </script>
 
@@ -477,6 +473,7 @@ window.__onGCastApiAvailable = function(available) {
       await session.loadMedia(request);
 
       document.getElementById("video").pause();
+      window.dispatchEvent(new Event("live-tv-cast-started"));
 
       window.reportCastError(
 
@@ -510,6 +507,9 @@ window.__onGCastApiAvailable = function(available) {
 
         startCasting();
 
+      } else if (event.sessionState ===
+          cast.framework.SessionState.SESSION_ENDED) {
+        window.dispatchEvent(new Event("live-tv-cast-ended"));
       }
 
     }
